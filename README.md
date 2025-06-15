@@ -1,1 +1,0 @@
-# Eltex_tasks
