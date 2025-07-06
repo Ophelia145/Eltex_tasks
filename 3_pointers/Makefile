@@ -18,8 +18,6 @@ run2: $(EX2)
 $(EX2): 2.o
 	$(CC) -o $@ $^
 
-main.o: main.c
-	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJS): %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
