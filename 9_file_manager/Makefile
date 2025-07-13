@@ -1,47 +1,30 @@
+SRC=$(wildcard *.c)
+OBJ=$(SRC:%.c=%.o)
+LFLAGS=-Wall -Wextra -std=c11
 CC=gcc
-CFLAGS= -Wall -Wextra -Werror --std=c11 -D_POSIX_C_SOURCE=200809L
-LDLIBS = -lcheck -lm
-GCOV_FLAGS = --coverage
-DEBUGFLAGS= -g
+EXECUTABLE=9th_task
 
-OS = $(shell uname -s)
-ifeq ($(OS),Linux)
-	LDLIBS := $(LDLIBS) -lsubunit
-endif
+.PHONY: all rebuild $(EXECUTABLE) clean
 
-SRC_FILES=$(wildcard ./**/s21*.c)
-OBJ_FILES=$(patsubst %.c,%.o, $(SRC_FILES))
+all: 9th_task
 
-TARGET=mcanalog
+rebuild: clean $(EXECUTABLE)
 
-LOGS_F=reports
-HTML_F=html
+$(EXECUTABLE): $(OBJ)
+		$(CC) $(LFLAGS) -o $(EXECUTABLE) $(OBJ)
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-all: $(TARGET).a test
-
-$(TARGET).a: $(OBJ_FILES)
-	ar rc $@ $^
-	ranlib $@ # in case ar doesn't have s flag
+		$(CC) $(LFLAGS) -c -o $@ $^
 
 clean:
-	rm -f $(OBJ_FILES)
-	rm -f $(TARGET).a
+		rm -f *.o *.exe $(EXECUTABLE)
 
-rebuild: clean all
+run: $(EXECUTABLE)
+		./$(EXECUTABLE)
+        
+cpp_clang:
+		clang-format -i --verbose *.c *.h
+		cppcheck --enable=all --suppress=missingIncludeSystem *.c *.h
 
-debug: CFLAGS += $(DEBUGFLAGS)
-debug: rebuild
-
-memleak: tests/*.c main.c $(TARGET).a
-	mkdir -p $(LOGS_F)
-	$(CC) $(CFLAGS) $(GCOV_FLAGS) $^ -o $(LOGS_F)/$@ $(LDLIBS)
-ifeq ($(OS),Darwin)
-	leaks -atExit -- ./$(LOGS_F)/$@ > $(LOGS_F)/leaks.log
-	grep -n "LEAK:" $(LOGS_F)/leaks.log ||:
-else ifeq ($(OS),Linux)
-	valgrind --tool=memcheck --leak-check=full --log-file=$(LOGS_F)/valgrind.log ./$(LOGS_F)/$@
-	grep -n "ERROR SUMMARY:" $(LOGS_F)/valgrind.log | grep -v "0 errors" ||:
-endif
+leaks:  
+		valgrind --leak-check=full ./$(EXECUTABLE)

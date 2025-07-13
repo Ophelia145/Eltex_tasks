@@ -12,8 +12,10 @@ int delete (abonent *array)
     {
       if (strcmp (array[i].tel, tel) == 0)
         {
+          printf ("Вы выбрали абонента %s %s \n", array[i].name,
+                  array[i].second_name);
           memset (&array[i], 0, sizeof (abonent));
-          printf ("Абонент удален\n");
+          printf ("Абонент удален");
           found = 1;
           break;
         }
