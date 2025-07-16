@@ -4,7 +4,7 @@ LFLAGS=-Wall -Wextra -std=c11
 CC=gcc
 EXECUTABLE=4th_task
 
-.PHONY: all rebuild $(EXECUTABLE) clean
+.PHONY: all rebuild clean
 
 all: 4th_task
 

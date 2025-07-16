@@ -2,7 +2,7 @@ LFLAGS=-Wall -Wextra -std=c11
 GBDFLAGS=-fno-stack-protector -no-pie
 CC=gcc
 
-.PHONY: all rebuild main cracker clean
+.PHONY: all rebuild clean
 
 all: main cracker
 
