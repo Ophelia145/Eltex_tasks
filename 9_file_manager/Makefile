@@ -1,30 +1,33 @@
 SRC=$(wildcard *.c)
-OBJ=$(SRC:%.c=%.o)
-LFLAGS=-Wall -Wextra -std=c11
+SRCMC = $(filter-out string_from_f_backwards.c, $(wildcard *.c))
+
+OBJ=$(SRCMC:%.c=%.o)
+CFLAGS = -Wextra -std=c11 -g3
+LDFLAGS = $(shell pkg-config --cflags --libs ncursesw)
 CC=gcc
 EXECUTABLE=9th_task
 
-.PHONY: all rebuild $(EXECUTABLE) clean
+.PHONY: all rebuild clean run cpp_clang leaks
 
-all: 9th_task
+all: $(EXECUTABLE)
 
 rebuild: clean $(EXECUTABLE)
 
 $(EXECUTABLE): $(OBJ)
-		$(CC) $(LFLAGS) -o $(EXECUTABLE) $(OBJ)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 %.o: %.c
-		$(CC) $(LFLAGS) -c -o $@ $^
+	$(CC) $(CFLAGS) $(LDFLAGS) -c -o $@ $<
 
 clean:
-		rm -f *.o *.exe $(EXECUTABLE)
+	rm -f *.o *.exe $(EXECUTABLE)
 
 run: $(EXECUTABLE)
-		./$(EXECUTABLE)
+	./$(EXECUTABLE)
         
 cpp_clang:
-		clang-format -i --verbose *.c *.h
-		cppcheck --enable=all --suppress=missingIncludeSystem *.c *.h
+	clang-format -i --verbose *.c *.h
+	cppcheck --enable=all --suppress=missingIncludeSystem *.c *.h
 
-leaks:  
-		valgrind --leak-check=full ./$(EXECUTABLE)
+leaks: $(EXECUTABLE)
+	valgrind --leak-check=full ./$(EXECUTABLE)
