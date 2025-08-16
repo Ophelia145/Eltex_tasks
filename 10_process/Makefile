@@ -2,7 +2,7 @@ SRC=$(wildcard *.c)
 OBJ=$(SRC:%.c=%.o)
 LFLAGS=-Wall -Wextra -std=c11
 CC=gcc
-EXECUTABLE=6th_task
+EXECUTABLE=10th_task
 
 .PHONY: all rebuild  clean
 
