@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -g
+CFLAGS = -Wall -Wextra -g -std=gnu11
 LDFLAGS_POSIX = -lrt
 INCLUDES = -I.
 
@@ -14,7 +14,7 @@ server: server.c
 	$(CC) $(CFLAGS) $(INCLUDES) $< -o $@ $(LDFLAGS_POSIX)
 
 client: client.c
-	$(CC) $(CFLAGS) $(INCLUDES) $< -o $@ $(LDFLAGS_POSIX)
+	$(CC) $(CFLAGS) $(INCLUDES) $< -o $@ $(LDFLAGS_POSIX)  -lncurses
 
 
 run-server: server

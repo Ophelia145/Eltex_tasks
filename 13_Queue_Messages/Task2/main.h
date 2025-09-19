@@ -1,6 +1,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <mqueue.h>
+#include <ncurses.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +13,8 @@
 #include <unistd.h>
 
 #define MAX_SIZE 1400
+
+#define HISTORY_SIZE 100
 #define QUEUE "/serqueue"
 
 typedef enum
