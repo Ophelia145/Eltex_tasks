@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#define MAX_CLIENTS 12
 #define MAX_SIZE 1400
 
 #define HISTORY_SIZE 100
@@ -21,7 +22,8 @@ typedef enum
 {
   MSG_REG,
   MSG_CHAT,
-  MSG_EXIT
+  MSG_EXIT,
+  MSG_USERLIST
 } msg_type;
 
 typedef struct message_info
@@ -38,3 +40,6 @@ typedef struct client_info
   char name[128];
   mqd_t qd; // queue descriptor
 } client_info;
+
+client_info clients[MAX_CLIENTS];
+int client_count = 0;

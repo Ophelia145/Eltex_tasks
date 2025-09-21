@@ -1,10 +1,7 @@
 #include "main.h"
 
-#define MAX_CLIENTS 12
 #define HISTORY_SIZE 100
 
-client_info clients[MAX_CLIENTS];
-int client_count = 0;
 mqd_t server_mq = (mqd_t)-1;
 
 message_info history[HISTORY_SIZE];
@@ -54,6 +51,22 @@ send_history (mqd_t client_qd)
     }
 }
 
+void
+send_userlist ()
+{
+  message_info msg = { 0 };
+  msg.type = MSG_USERLIST;
+  strcpy (msg.sender, "SERVER");
+
+  msg.text[0] = '\0';
+  for (int i = 0; i < client_count; i++)
+    {
+      strcat (msg.text, clients[i].name);
+      strcat (msg.text, "\n");
+    }
+
+  broadcast (&msg);
+}
 int
 main ()
 {
@@ -132,6 +145,7 @@ main ()
               clients[client_count].name[sizeof (clients[0].name) - 1] = '\0';
               clients[client_count].qd = client_qd;
               client_count++;
+              send_userlist ();
 
               printf ("new client: %s\n", msg.sender);
 
@@ -154,6 +168,7 @@ main ()
                 }
               snprintf (notify.text, MAX_SIZE, "%s left our chat", msg.sender);
               broadcast (&notify);
+              send_userlist ();
             }
         }
     }

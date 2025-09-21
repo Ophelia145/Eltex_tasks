@@ -3,10 +3,12 @@
 mqd_t server_qd = (mqd_t)-1;
 mqd_t client_qd = (mqd_t)-1;
 char client_queue_name[128];
-char client_name[120];
+char client_name[128];
 
 WINDOW *chat_win;
 WINDOW *input_win;
+WINDOW *user_win;
+
 pthread_mutex_t win_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void *
@@ -18,21 +20,44 @@ receiver_thread (void *arg __attribute__ ((unused)))
       ssize_t bytes = mq_receive (client_qd, (char *)&msg, sizeof (msg), NULL);
       if (bytes >= 0)
         {
-          pthread_mutex_lock (&win_lock);
-          if (strcmp (msg.sender, "SERVER") == 0)
-            wattron (chat_win, COLOR_PAIR (1));
+          if (msg.type == MSG_USERLIST)
+            {
+              pthread_mutex_lock (&win_lock);
+              werase (user_win);
+              box (user_win, 0, 0);
+              mvwprintw (user_win, 0, 2, "Users");
+
+              int line = 1;
+              char *saveptr;
+              char *token = strtok_r (msg.text, "\n", &saveptr);
+              while (token && line < getmaxy (user_win) - 1)
+                {
+                  mvwprintw (user_win, line++, 1, "%s", token);
+                  token = strtok_r (NULL, "\n", &saveptr);
+                }
+
+              wrefresh (user_win);
+              pthread_mutex_unlock (&win_lock);
+            }
           else
-            wattron (chat_win, COLOR_PAIR (2));
+            {
+              // 👉 обычное сообщение в чат
+              pthread_mutex_lock (&win_lock);
+              if (strcmp (msg.sender, "SERVER") == 0)
+                wattron (chat_win, COLOR_PAIR (1));
+              else
+                wattron (chat_win, COLOR_PAIR (2));
 
-          wprintw (chat_win, "[%s]: %s\n", msg.sender, msg.text);
-          wrefresh (chat_win);
+              wprintw (chat_win, "[%s]: %s\n", msg.sender, msg.text);
+              wrefresh (chat_win);
 
-          if (strcmp (msg.sender, "SERVER") == 0)
-            wattroff (chat_win, COLOR_PAIR (1));
-          else
-            wattroff (chat_win, COLOR_PAIR (2));
+              if (strcmp (msg.sender, "SERVER") == 0)
+                wattroff (chat_win, COLOR_PAIR (1));
+              else
+                wattroff (chat_win, COLOR_PAIR (2));
 
-          pthread_mutex_unlock (&win_lock);
+              pthread_mutex_unlock (&win_lock);
+            }
         }
     }
   return NULL;
@@ -42,7 +67,7 @@ int
 main ()
 {
   printf ("Enter your name: ");
-  if (scanf ("%119s", client_name) != 1)
+  if (scanf ("%127s", client_name) != 1)
     {
       fprintf (stderr, "Invalid name\n");
       exit (1);
@@ -64,6 +89,30 @@ main ()
       exit (1);
     }
 
+  ////////отрисовка
+  initscr ();
+  cbreak ();
+  // noecho ();
+  start_color ();
+  init_pair (1, COLOR_GREEN, COLOR_BLACK);
+  init_pair (2, COLOR_CYAN, COLOR_BLACK);
+
+  int height, width;
+  getmaxyx (stdscr, height, width);
+
+  chat_win = newwin (height - 3, width - 20, 0, 0);
+  input_win = newwin (3, width - 20, height - 3, 0);
+  user_win = newwin (height - 3, 20, 0, width - 20);
+
+  keypad (input_win, TRUE);
+  scrollok (chat_win, TRUE);
+  scrollok (user_win, TRUE);
+  box (input_win, 0, 0);
+  box (user_win, 0, 0);
+  wrefresh (chat_win);
+  wrefresh (user_win);
+  wrefresh (input_win);
+  /////////////////////////////////////
   pthread_t tid;
   pthread_create (&tid, NULL, receiver_thread, NULL);
   pthread_detach (tid);
@@ -81,23 +130,7 @@ main ()
   strcpy (join_msg.queue_name, client_queue_name);
   mq_send (server_qd, (char *)&join_msg, sizeof (join_msg), 0);
 
-  initscr ();
-  cbreak ();
-  // noecho ();
-  start_color ();
-  init_pair (1, COLOR_GREEN, COLOR_BLACK);
-  init_pair (2, COLOR_CYAN, COLOR_BLACK);
-
-  int height, width;
-  getmaxyx (stdscr, height, width);
-
-  chat_win = newwin (height - 3, width, 0, 0);
-  input_win = newwin (3, width, height - 3, 0);
-  keypad (input_win, TRUE);
-  scrollok (chat_win, TRUE);
-  box (input_win, 0, 0);
-  wrefresh (chat_win);
-  wrefresh (input_win);
+  ////////////////////////////////////////////////////
 
   char text[MAX_SIZE];
   while (1)
