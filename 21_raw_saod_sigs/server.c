@@ -2,7 +2,6 @@
 #include <errno.h>
 #include <ifaddrs.h>
 #define __USE_MISC 1
-#include <ifaddrs.h>
 #include <net/ethernet.h>
 #include <net/if.h>
 #include <netinet/ether.h>
@@ -22,183 +21,129 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#define MAX_CLIENTS 7
-#define SIZE_BUF 1024
-#define REPLY_SIZE 256
-#define QUIT "q"
-#define SERVER_PORT 1414
+#define MAX_C 7
+#define BUF_SZ 1024
+#define RESP_SZ 256
+#define EXIT_CMD "q"
+#define PORT_SRV 1414
 
 volatile sig_atomic_t stop_flag = 0;
 
 void
-handle_sigint (int sig)
+sig_handler (int signo)
 {
-  (void)sig;
   stop_flag = 1;
+  (void)signo;
 }
 
 typedef struct
 {
-  struct in_addr ip;
+  struct in_addr addr;
   uint16_t port;
-  int counter;
-  int used;
-} client_info;
+  int count;
+  int active;
+} Client;
 
-client_info clients[MAX_CLIENTS];
+Client cl_list[MAX_C];
 
-int
-client_equal (struct in_addr *ip1, uint16_t port1, struct in_addr *ip2,
-              uint16_t port2)
+static int
+cmp_client (struct in_addr *a, uint16_t p1, struct in_addr *b, uint16_t p2)
 {
-  return ip1->s_addr == ip2->s_addr && port1 == port2;
+  return a->s_addr == b->s_addr && p1 == p2;
 }
 
-int
-get_ind_client (struct in_addr *ip, uint16_t port)
+static int
+find_or_add_client (struct in_addr *ip, uint16_t port)
 {
-  for (int i = 0; i < MAX_CLIENTS; ++i)
-    {
-      if (clients[i].used
-          && client_equal (&clients[i].ip, clients[i].port, ip, port))
-        {
-          return i;
-        }
-    }
-  for (int i = 0; i < MAX_CLIENTS; ++i)
-    {
-      if (!clients[i].used)
-        {
-          clients[i].ip = *ip;
-          clients[i].port = port;
-          clients[i].counter = 0;
-          clients[i].used = 1;
-          return i;
-        }
-    }
+  for (int i = 0; i < MAX_C; ++i)
+    if (cl_list[i].active
+        && cmp_client (&cl_list[i].addr, cl_list[i].port, ip, port))
+      return i;
+
+  for (int i = 0; i < MAX_C; ++i)
+    if (!cl_list[i].active)
+      {
+        cl_list[i].addr = *ip;
+        cl_list[i].port = port;
+        cl_list[i].count = 0;
+        cl_list[i].active = 1;
+        return i;
+      }
   return -1;
 }
 
-void
-reset_client (int idx)
+static void
+reset_client (int i)
 {
-  clients[idx].used = 0;
-  clients[idx].counter = 0;
-  clients[idx].port = 0;
-  memset (&clients[idx].ip, 0, sizeof (clients[idx].ip));
+  cl_list[i].active = 0;
+  cl_list[i].count = 0;
+  cl_list[i].port = 0;
+  memset (&cl_list[i].addr, 0, sizeof (cl_list[i].addr));
 }
 
-uint16_t
-ip_checksum (void *header)
+static uint16_t
+compute_checksum (void *hdr)
 {
   uint32_t sum = 0;
-  uint16_t *ptr = (uint16_t *)header;
-
-  for (int i = 0; i < 10; i++)
-    {
-      sum += ntohs (ptr[i]);
-    }
-
+  uint16_t *ptr = hdr;
+  for (int i = 0; i < 10; ++i)
+    sum += ntohs (ptr[i]);
   while (sum >> 16)
-    {
-      sum = (sum & 0xFFFF) + (sum >> 16);
-    }
-
-  return htons ((uint16_t)~sum);
+    sum = (sum & 0xFFFF) + (sum >> 16);
+  return htons (~sum);
 }
 
 int
-get_ip_and_iface (char *ip_buf, size_t ip_buf_len, char *iface_buf,
-                  size_t iface_buf_len)
+make_response_packet (char *pkt, struct ether_header *eth_in,
+                      struct iphdr *ip_in, struct udphdr *udp_in, char *msg,
+                      int ctr)
 {
-  struct ifaddrs *ifaddr, *ifa;
-  int found = 0;
-  if (getifaddrs (&ifaddr) == -1)
-    {
-      perror ("getifaddrs");
-      return -1;
-    }
-  for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
-    {
-      if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET
-          && !(ifa->ifa_flags & IFF_LOOPBACK))
-        {
-          struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
-          if (inet_ntop (AF_INET, &sa->sin_addr, ip_buf, ip_buf_len))
-            {
-              strncpy (iface_buf, ifa->ifa_name, iface_buf_len - 1);
-              iface_buf[iface_buf_len - 1] = '\0';
-              found = 1;
-              break;
-            }
-        }
-    }
-  freeifaddrs (ifaddr);
-  return found ? 0 : -1;
-}
+  struct ether_header *eth_out = (struct ether_header *)pkt;
+  memcpy (eth_out->ether_dhost, eth_in->ether_shost, 6);
+  memcpy (eth_out->ether_shost, eth_in->ether_dhost, 6);
+  eth_out->ether_type = htons (ETHERTYPE_IP);
 
-int
-make_answer_pack (char *packet, struct ether_header *received_eth,
-                  struct iphdr *received_iph, struct udphdr *received_udph,
-                  char *payload, int client_counter)
-{
-  struct ether_header *eth = (struct ether_header *)packet;
+  struct iphdr *ip_out = (struct iphdr *)(pkt + sizeof (struct ether_header));
+  ip_out->version = 4;
+  ip_out->ihl = 5;
+  ip_out->tos = 0;
+  char rmsg[RESP_SZ];
+  int rlen = snprintf (rmsg, sizeof (rmsg), "%s %d", msg, ctr);
+  ip_out->tot_len
+      = htons (sizeof (struct iphdr) + sizeof (struct udphdr) + rlen);
+  ip_out->id = 0;
+  ip_out->frag_off = 0;
+  ip_out->ttl = 64;
+  ip_out->protocol = IPPROTO_UDP;
+  ip_out->saddr = ip_in->daddr;
+  ip_out->daddr = ip_in->saddr;
+  ip_out->check = 0;
+  ip_out->check = compute_checksum (ip_out);
 
-  memcpy (eth->ether_dhost, received_eth->ether_shost, 6);
-  memcpy (eth->ether_shost, received_eth->ether_dhost, 6);
+  struct udphdr *udp_out = (struct udphdr *)(pkt + sizeof (struct ether_header)
+                                             + sizeof (struct iphdr));
+  udp_out->source = udp_in->dest;
+  udp_out->dest = udp_in->source;
+  udp_out->len = htons (sizeof (struct udphdr) + rlen);
+  udp_out->check = 0;
 
-  eth->ether_type = htons (ETHERTYPE_IP);
-
-  struct iphdr *iph = (struct iphdr *)(packet + sizeof (struct ether_header));
-  iph->version = 4;
-  iph->ihl = 5;
-  iph->tos = 0;
-
-  char reply_msg[REPLY_SIZE];
-  int reply_msg_len = snprintf (reply_msg, sizeof (reply_msg), "%s %d",
-                                payload, client_counter);
-
-  iph->tot_len
-      = htons (sizeof (struct iphdr) + sizeof (struct udphdr) + reply_msg_len);
-  iph->id = 0;
-  iph->frag_off = 0;
-  iph->ttl = 64;
-  iph->protocol = IPPROTO_UDP;
-
-  iph->saddr = received_iph->daddr;
-  iph->daddr = received_iph->saddr;
-
-  iph->check = 0;
-  iph->check = ip_checksum (iph);
-
-  struct udphdr *udph = (struct udphdr *)(packet + sizeof (struct ether_header)
-                                          + sizeof (struct iphdr));
-
-  udph->source = received_udph->dest;
-  udph->dest = received_udph->source;
-
-  udph->len = htons (sizeof (struct udphdr) + reply_msg_len);
-  udph->check = 0;
-
-  char *reply_payload = (char *)(udph + 1);
-  memcpy (reply_payload, reply_msg, reply_msg_len);
+  char *payload_out = (char *)(udp_out + 1);
+  memcpy (payload_out, rmsg, rlen);
 
   return sizeof (struct ether_header) + sizeof (struct iphdr)
-         + sizeof (struct udphdr) + reply_msg_len;
+         + sizeof (struct udphdr) + rlen;
 }
 
 int
 main ()
 {
-
-  struct sigaction sa;
-  sa.sa_handler = handle_sigint;
+  struct sigaction sa = { 0 };
+  sa.sa_handler = sig_handler;
   sigemptyset (&sa.sa_mask);
-  sa.sa_flags = 0;
   sigaction (SIGINT, &sa, NULL);
 
-  int s = socket (AF_PACKET, SOCK_RAW, htons (ETH_P_ALL));
-  if (s == -1)
+  int sock = socket (AF_PACKET, SOCK_RAW, htons (ETH_P_ALL));
+  if (sock == -1)
     {
       perror ("socket");
       exit (EXIT_FAILURE);
@@ -208,131 +153,104 @@ main ()
   sll.sll_family = AF_PACKET;
   sll.sll_ifindex = if_nametoindex ("eth0");
   sll.sll_protocol = htons (ETH_P_ALL);
-
-  if (bind (s, (struct sockaddr *)&sll, sizeof (sll)) == -1)
+  if (bind (sock, (struct sockaddr *)&sll, sizeof (sll)) == -1)
     {
       perror ("bind");
-      close (s);
+      close (sock);
       exit (EXIT_FAILURE);
     }
 
-  printf (
-      "raw socket server started on eth0. listening for udp packets on port "
-      "1414\n");
+  printf ("raw server on eth0 listening udp:%d\n", PORT_SRV);
 
-  char buf[SIZE_BUF];
-
-  struct in_addr server_ip;
-  inet_pton (AF_INET, "10.10.10.20", &server_ip);
+  char buffer[BUF_SZ];
+  struct in_addr srv_ip;
+  inet_pton (AF_INET, "10.10.10.20", &srv_ip);
 
   while (!stop_flag)
     {
-      int bytes_received = recv (s, buf, sizeof (buf), 0);
-      if (bytes_received == -1)
+      int n = recv (sock, buffer, sizeof (buffer), 0);
+      if (n == -1)
         {
-          if (errno == EAGAIN || errno == EWOULDBLOCK)
-            {
-              continue;
-            }
-          else
+          if (errno != EAGAIN && errno != EWOULDBLOCK)
             {
               perror ("recv");
               break;
             }
+          continue;
         }
 
-      struct ether_header *eth = (struct ether_header *)buf;
-      struct iphdr *iph = (struct iphdr *)(buf + sizeof (struct ether_header));
+      struct ether_header *eth = (struct ether_header *)buffer;
+      struct iphdr *iph
+          = (struct iphdr *)(buffer + sizeof (struct ether_header));
       struct udphdr *udph
-          = (struct udphdr *)(buf + sizeof (struct ether_header)
+          = (struct udphdr *)(buffer + sizeof (struct ether_header)
                               + iph->ihl * 4);
-
-      if (bytes_received < (int)(sizeof (struct ether_header) + iph->ihl * 4
-                                 + sizeof (struct udphdr)))
+      if (n < (int)(sizeof (struct ether_header) + iph->ihl * 4
+                    + sizeof (struct udphdr)))
         continue;
       if (ntohs (eth->ether_type) != ETHERTYPE_IP)
         continue;
       if (iph->protocol != IPPROTO_UDP)
         continue;
-      if (iph->daddr != server_ip.s_addr)
+      if (iph->daddr != srv_ip.s_addr)
         continue;
-      if (ntohs (udph->dest) != 1414)
+      if (ntohs (udph->dest) != PORT_SRV)
         continue;
 
-      char *payload = (char *)(udph + 1);
-      uint16_t udp_len = ntohs (udph->len);
-      uint16_t payload_len = udp_len - sizeof (struct udphdr);
-
-      if (bytes_received
-          < (int)(sizeof (struct ether_header) + iph->ihl * 4 + udp_len))
+      char *pl = (char *)(udph + 1);
+      uint16_t pl_len = ntohs (udph->len) - sizeof (struct udphdr);
+      if (pl_len > 0)
         {
-          continue;
-        }
-
-      if (payload_len > 0)
-        {
-          int bytes_left_in_buf = SIZE_BUF - (payload - buf) - 1;
-          int safe_payload_len = (payload_len < bytes_left_in_buf)
-                                     ? payload_len
-                                     : bytes_left_in_buf;
-          payload[safe_payload_len] = '\0';
+          int safe_len = (pl_len < (BUF_SZ - (pl - buffer) - 1))
+                             ? pl_len
+                             : (BUF_SZ - (pl - buffer) - 1);
+          pl[safe_len] = '\0';
         }
       else
-        {
-          continue;
-        }
+        continue;
 
-      struct in_addr client_ip;
-      client_ip.s_addr = iph->saddr;
-      uint16_t client_port = ntohs (udph->source);
+      struct in_addr cli_ip;
+      cli_ip.s_addr = iph->saddr;
+      uint16_t cli_port = ntohs (udph->source);
+      printf ("received from %s:%d: %s\n", inet_ntoa (cli_ip), cli_port, pl);
 
-      printf ("received from %s:%d: %s\n", inet_ntoa (client_ip), client_port,
-              payload);
-
-      int idx = get_ind_client (&client_ip, udph->source);
+      int idx = find_or_add_client (&cli_ip, udph->source);
       if (idx == -1)
         {
-          fprintf (stderr, "enough clients, ignoring message from %s:%d\n",
-                   inet_ntoa (client_ip), client_port);
+          fprintf (stderr, "too many clients, ignore %s:%d\n",
+                   inet_ntoa (cli_ip), cli_port);
           continue;
         }
 
-      int is_quit = strcmp (payload, QUIT);
-      if (is_quit == 0)
+      if (strcmp (pl, EXIT_CMD) == 0)
         {
-          printf ("client counter reset %s:%d\n", inet_ntoa (client_ip),
-                  client_port);
           reset_client (idx);
+          printf ("client reset %s:%d\n", inet_ntoa (cli_ip), cli_port);
           continue;
         }
 
-      clients[idx].counter++;
+      cl_list[idx].count++;
 
-      char reply_packet[SIZE_BUF];
-      memset (reply_packet, 0, sizeof (reply_packet));
-      int packet_len = make_answer_pack (reply_packet, eth, iph, udph, payload,
-                                         clients[idx].counter);
+      char reply_pkt[BUF_SZ] = { 0 };
+      int pkt_len = make_response_packet (reply_pkt, eth, iph, udph, pl,
+                                          cl_list[idx].count);
 
-      struct sockaddr_ll dest_addr = { 0 };
-      dest_addr.sll_family = AF_PACKET;
-      dest_addr.sll_ifindex = if_nametoindex ("eth0");
-      dest_addr.sll_halen = ETH_ALEN;
-      memcpy (dest_addr.sll_addr, eth->ether_shost, 6);
-      dest_addr.sll_protocol = htons (ETH_P_IP);
+      struct sockaddr_ll dst = { 0 };
+      dst.sll_family = AF_PACKET;
+      dst.sll_ifindex = if_nametoindex ("eth0");
+      dst.sll_halen = ETH_ALEN;
+      memcpy (dst.sll_addr, eth->ether_shost, 6);
+      dst.sll_protocol = htons (ETH_P_IP);
 
-      if (sendto (s, reply_packet, packet_len, 0,
-                  (struct sockaddr *)&dest_addr, sizeof (dest_addr))
+      if (sendto (sock, reply_pkt, pkt_len, 0, (struct sockaddr *)&dst,
+                  sizeof (dst))
           == -1)
-        {
-          perror ("sendto");
-        }
+        perror ("sendto");
       else
-        {
-          printf ("sent reply to %s:%d: %s %d\n", inet_ntoa (client_ip),
-                  client_port, payload, clients[idx].counter);
-        }
+        printf ("sent reply to %s:%d: %s %d\n", inet_ntoa (cli_ip), cli_port,
+                pl, cl_list[idx].count);
     }
 
-  close (s);
+  close (sock);
   return 0;
 }
