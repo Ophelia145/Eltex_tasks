@@ -1,0 +1,25 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    networks:
+      mynet:
+        ipv4_address: 10.10.10.10
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    depends_on:
+      - server
+    networks:
+      mynet:
+        ipv4_address: 10.10.10.11
+
+networks:
+  mynet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.10.0/24
